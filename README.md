@@ -9,8 +9,8 @@ Given a set of graphs (in `.g6` format), computes the LID chromatic number for e
 ## Build
 
 ```bash
-gcc -c graphio.c
-g++ -o lid_coloring lid_coloring.cpp graphio.o
+gcc -O2 -c graphio.c -o graphio.o
+g++ -std=c++17 -O2 -fopenmp -o lid_coloring lid_coloring.cpp graphio.o
 ```
 
 ## Usage
@@ -19,7 +19,3 @@ g++ -o lid_coloring lid_coloring.cpp graphio.o
 ./lid_coloring <graph_file.g6>
 ```
 
-## Data
-
-- `list_70_graphs.g6` — 70 cubic graphs with girth ≥ 5 (main dataset)
-- `cub20-gir5.g6`, `cub20-gir6.g6` — auxiliary graph lists
