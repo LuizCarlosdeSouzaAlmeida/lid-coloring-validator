@@ -193,8 +193,8 @@ static void imprimir_progresso(int feitos, int total,
         fprintf(stderr, "\033[A\r\033[K");
 
     // Barra de progresso
-    int pct    = feitos * 100 / total;
-    int filled = feitos * 40  / total;
+    int pct    = (int)((long long)feitos * 100 / total);
+    int filled = (int)((long long)feitos * 40  / total);
     fprintf(stderr, "[");
     for (int j = 0; j < 40; j++)
         fprintf(stderr, "%c", j < filled ? '#' : '-');
