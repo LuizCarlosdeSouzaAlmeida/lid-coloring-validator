@@ -18,6 +18,7 @@
 #include <map>
 #include <cstdint>
 #include <omp.h>
+#include <cstring>
 
 using namespace std;
 
@@ -121,9 +122,9 @@ bool backtrack(int v, int k, int max_cor, vector<int> &coloring, unsigned long *
     return false;
 }
 
-struct Resultado { int chi, chi_lid; bool encontrou; };
+struct Resultado { int chi, chi_lid; bool encontrou; vector<int> coloring_lid; vector<int> coloring_chi; };
 
-Resultado processar_grafo(const string &gs) {
+Resultado processar_grafo(const string &gs, bool with_chi, bool with_colorings) {
     vector<char> buf(gs.begin(), gs.end());
     buf.push_back('\0');
 
@@ -166,19 +167,29 @@ Resultado processar_grafo(const string &gs) {
     }
 
     int chi = -1;
-    for (int k = 2; k <= n; k++) {
-        vector<int> coloring(n, -1);
-        coloring[perm[0]] = 0;
-        if (backtrack_simples(1, k, 0, coloring, g.data())) { chi = k; break; }
+    vector<int> chi_coloring;
+    if (with_chi) {
+        for (int k = 2; k <= n; k++) {
+            vector<int> coloring(n, -1);
+            coloring[perm[0]] = 0;
+            if (backtrack_simples(1, k, 0, coloring, g.data())) {
+                chi = k;
+                if (with_colorings) chi_coloring = coloring;
+                break;
+            }
+        }
     }
 
-    for (int k = chi; k <= n; k++) {
+    int start_k = (chi != -1) ? chi : 2;
+    for (int k = start_k; k <= n; k++) {
         vector<int> coloring(n, -1);
         coloring[perm[0]] = 0;
-        if (backtrack(1, k, 0, coloring, g.data()))
-            return {chi, k, true};
+        if (backtrack(1, k, 0, coloring, g.data())) {
+            vector<int> lid_col = with_colorings ? coloring : vector<int>{};
+            return {chi, k, true, lid_col, chi_coloring};
+        }
     }
-    return {chi, -1, false};
+    return {chi, -1, false, {}, chi_coloring};
 }
 
 // linhas_anteriores: quantas linhas foram impressas na chamada anterior
@@ -187,7 +198,8 @@ static int linhas_anteriores = 0;
 
 static void imprimir_progresso(int feitos, int total,
                                const map<pair<int,int>,int> &dist,
-                               int sem_coloracao) {
+                               int sem_coloracao,
+                               bool with_chi) {
     // Sobe o cursor para apagar o bloco anterior
     for (int i = 0; i < linhas_anteriores; i++)
         fprintf(stderr, "\033[A\r\033[K");
@@ -203,7 +215,10 @@ static void imprimir_progresso(int feitos, int total,
     // Totalizadores em tempo real
     int linhas = 1;
     for (auto &[par, cnt] : dist) {
-        fprintf(stderr, "  chi=%d chi_lid=%d: %d\n", par.first, par.second, cnt);
+        if (with_chi)
+            fprintf(stderr, "  chi=%d chi_lid=%d: %d\n", par.first, par.second, cnt);
+        else
+            fprintf(stderr, "  chi_lid=%d: %d\n", par.second, cnt);
         linhas++;
     }
     if (sem_coloracao > 0) {
@@ -217,12 +232,35 @@ static void imprimir_progresso(int feitos, int total,
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Uso: %s <arquivo.g6>\n", argv[0]);
+        fprintf(stderr, "Uso: %s <arquivo.g6> [--with-chi] [--with-colorings] [--output-all] [--chi-lid-filter N]\n", argv[0]);
         return 1;
     }
 
-    FILE *f = fopen(argv[1], "r");
-    if (!f) { fprintf(stderr, "Erro: nao foi possivel abrir '%s'\n", argv[1]); return 1; }
+    bool output_all = false;
+    bool with_chi = false;
+    bool with_colorings = false;
+    int chi_lid_filter = -1;
+    const char *g6_file = nullptr;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--output-all") == 0) {
+            output_all = true;
+            with_chi = true;
+            with_colorings = true;
+            chi_lid_filter = -1;
+        } else if (strcmp(argv[i], "--with-chi") == 0) {
+            with_chi = true;
+        } else if (strcmp(argv[i], "--with-colorings") == 0) {
+            with_colorings = true;
+        } else if (strcmp(argv[i], "--chi-lid-filter") == 0 && i + 1 < argc) {
+            chi_lid_filter = atoi(argv[++i]);
+        } else {
+            g6_file = argv[i];
+        }
+    }
+    if (!g6_file) { fprintf(stderr, "Erro: nenhum arquivo .g6 especificado\n"); return 1; }
+
+    FILE *f = fopen(g6_file, "r");
+    if (!f) { fprintf(stderr, "Erro: nao foi possivel abrir '%s'\n", g6_file); return 1; }
 
     vector<string> grafos;
     char *s;
@@ -239,20 +277,23 @@ int main(int argc, char *argv[]) {
 
     fprintf(stderr, "Processando %d grafos com %d thread(s)...\n",
             total, omp_get_max_threads());
-    imprimir_progresso(0, total, dist_pares, sem_coloracao);
+    imprimir_progresso(0, total, dist_pares, sem_coloracao, with_chi);
+
+    vector<Resultado> resultados(total);
 
     #pragma omp parallel for schedule(dynamic, 1)
     for (int i = 0; i < total; i++) {
-        Resultado r = processar_grafo(grafos[i]);
+        resultados[i] = processar_grafo(grafos[i], with_chi, with_colorings);
 
         #pragma omp critical
         {
-            if (r.encontrou) dist_pares[{r.chi, r.chi_lid}]++;
+            Resultado &r = resultados[i];
+            if (r.encontrou) dist_pares[{with_chi ? r.chi : -1, r.chi_lid}]++;
             else sem_coloracao++;
             feitos++;
             double agora = omp_get_wtime();
             if (agora - ultimo_tick >= 0.5 || feitos == total) {
-                imprimir_progresso(feitos, total, dist_pares, sem_coloracao);
+                imprimir_progresso(feitos, total, dist_pares, sem_coloracao, with_chi);
                 ultimo_tick = agora;
             }
         }
@@ -261,10 +302,42 @@ int main(int argc, char *argv[]) {
 
     cout << "========================================\n";
     cout << "Total: " << total << " grafos processados.\n";
-    cout << "Distribuicao por (chi, chi_lid):\n";
-    for (auto &[par, cnt] : dist_pares)
-        cout << "  chi=" << par.first << " chi_lid=" << par.second
-             << ": " << cnt << " grafo(s)\n";
+
+    bool print_per_graph = output_all || (chi_lid_filter != -1);
+    if (print_per_graph) {
+        cout << "\nResultados por grafo:\n";
+        for (int i = 0; i < total; i++) {
+            Resultado &r = resultados[i];
+            if (!r.encontrou) continue;
+            if (!output_all && r.chi_lid != chi_lid_filter) continue;
+
+            cout << "graph " << i << ":";
+            if (with_chi)
+                cout << " chi=" << r.chi;
+            cout << " chi_lid=" << r.chi_lid;
+            if (with_colorings) {
+                cout << " chi_coloring=[";
+                for (int v = 0; v < (int)r.coloring_chi.size(); v++)
+                    cout << (v ? "," : "") << r.coloring_chi[v];
+                cout << "] lid_coloring=[";
+                for (int v = 0; v < (int)r.coloring_lid.size(); v++)
+                    cout << (v ? "," : "") << r.coloring_lid[v];
+                cout << "]";
+            }
+            cout << "\n";
+        }
+    }
+
+    if (with_chi) {
+        cout << "\nDistribuicao por (chi, chi_lid):\n";
+        for (auto &[par, cnt] : dist_pares)
+            cout << "  chi=" << par.first << " chi_lid=" << par.second
+                 << ": " << cnt << " grafo(s)\n";
+    } else {
+        cout << "\nDistribuicao por chi_lid:\n";
+        for (auto &[par, cnt] : dist_pares)
+            cout << "  chi_lid=" << par.second << ": " << cnt << " grafo(s)\n";
+    }
     if (sem_coloracao > 0)
         cout << "  sem coloracao LID: " << sem_coloracao << " grafo(s)\n";
     return 0;
