@@ -2,3 +2,9 @@
 *.o
 *.out
 lid_coloring
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.python-version

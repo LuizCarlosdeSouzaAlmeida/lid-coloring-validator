@@ -1,0 +1,4 @@
+networkx>=3.2
+matplotlib>=3.8
+scipy>=1.11
+pyvis>=0.3
