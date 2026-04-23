@@ -8,3 +8,7 @@ lid_coloring
 __pycache__/
 *.pyc
 .python-version
+
+# Resultados gerados (mantém a pasta no repo, ignora o conteúdo)
+results/*
+!results/.gitkeep

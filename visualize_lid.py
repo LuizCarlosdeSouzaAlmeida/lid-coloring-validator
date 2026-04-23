@@ -54,7 +54,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Índices 0-based dos grafos a visualizar, ex: '0,3' ou '0-5'")
     p.add_argument("--chi", type=int, metavar="N", help="Filtrar por valor de χ")
     p.add_argument("--chi-lid", type=int, metavar="N", help="Filtrar por valor de χ_LID")
-    p.add_argument("--save-dir", metavar="DIR", help="Salvar figuras neste diretório")
+    p.add_argument("--save-dir", metavar="DIR", default="results",
+                   help="Salvar figuras neste diretório (padrão: results/)")
     p.add_argument("--format", choices=["png", "pdf", "svg"], default="png",
                    help="Formato das figuras salvas (padrão: png)")
     p.add_argument("--no-show", action="store_true",
