@@ -7,7 +7,7 @@
   Compilar: gcc -O2 -c graphio.c -o graphio.o && g++ -std=c++17 -O2 -fopenmp -o lid_coloring lid_coloring.cpp graphio.o
   Executar: ./lid_coloring <arquivo.g6>
 
-  Suporta grafos com ate 64 vertices (uint64_t para bitmasks de vizinhanca).
+  Suporta grafos com ate 128 vertices (__uint128_t para bitmasks de vizinhanca).
 */
 
 #include "graphio.h"
@@ -23,18 +23,54 @@
 using namespace std;
 
 thread_local int n, m;
-thread_local vector<uint64_t> viz_fechada;
+thread_local vector<__uint128_t> viz_fechada;
 thread_local vector<pair<int, int>> pares_checar;
 thread_local vector<vector<pair<int, int>>> checar_no_passo;
 thread_local vector<int> perm;
 
-inline uint64_t calc_viz_fechada(unsigned long *g, int v) {
-    uint64_t mask = (1ULL << v);
+inline int ctz128(__uint128_t x) {
+    uint64_t lo = (uint64_t)x;
+    if (lo) return __builtin_ctzll(lo);
+    return 64 + __builtin_ctzll((uint64_t)(x >> 64));
+}
+
+inline __uint128_t calc_viz_fechada(unsigned long *g, int v) {
+    __uint128_t mask = (__uint128_t)1 << v;
     unsigned long *row = g + (long)v * m;
     int j = -1;
     while ((j = nextelement(row, m, j)) >= 0)
-        mask |= (1ULL << j);
+        mask |= (__uint128_t)1 << j;
     return mask;
+}
+
+int contar_twins(unsigned long *g, const vector<__uint128_t> &vf) {
+    int cnt = 0;
+    for (int u = 0; u < n; u++)
+        for (int v = u + 1; v < n; v++)
+            if (sao_vizinhos(g, u, v, m) && vf[u] == vf[v])
+                cnt++;
+    return cnt;
+}
+
+bool eh_claw_free(unsigned long *g) {
+    for (int v = 0; v < n; v++) {
+        vector<int> nbrs;
+        unsigned long *row = g + (long)v * m;
+        int j = -1;
+        while ((j = nextelement(row, m, j)) >= 0)
+            nbrs.push_back(j);
+        int d = (int)nbrs.size();
+        for (int i = 0; i < d; i++)
+            for (int j2 = i + 1; j2 < d; j2++)
+                for (int k = j2 + 1; k < d; k++) {
+                    int a = nbrs[i], b = nbrs[j2], c = nbrs[k];
+                    if (!sao_vizinhos(g, a, b, m) &&
+                        !sao_vizinhos(g, a, c, m) &&
+                        !sao_vizinhos(g, b, c, m))
+                        return false;
+                }
+    }
+    return true;
 }
 
 inline bool cor_valida(int v, int cor, const vector<int> &coloring, unsigned long *g) {
@@ -47,10 +83,10 @@ inline bool cor_valida(int v, int cor, const vector<int> &coloring, unsigned lon
     return true;
 }
 
-inline uint32_t color_set(uint64_t nbr_mask, const vector<int> &coloring) {
+inline uint32_t color_set(__uint128_t nbr_mask, const vector<int> &coloring) {
     uint32_t colors = 0;
     while (nbr_mask) {
-        int w = __builtin_ctzll(nbr_mask);
+        int w = ctz128(nbr_mask);
         nbr_mask &= nbr_mask - 1;
         colors |= (1u << coloring[w]);
     }
@@ -122,17 +158,23 @@ bool backtrack(int v, int k, int max_cor, vector<int> &coloring, unsigned long *
     return false;
 }
 
-struct Resultado { int chi, chi_lid; bool encontrou; vector<int> coloring_lid; vector<int> coloring_chi; };
+struct Resultado { int chi, chi_lid, claw_free, twins; bool encontrou; vector<int> coloring_lid; vector<int> coloring_chi; };
 
-Resultado processar_grafo(const string &gs, bool with_chi, bool with_colorings) {
+Resultado processar_grafo(const string &gs, bool with_chi, bool with_colorings, bool with_claw_free, bool with_twins) {
     vector<char> buf(gs.begin(), gs.end());
     buf.push_back('\0');
 
     n = graphsize(buf.data());
+    if (n > 128) {
+        fprintf(stderr, "Erro: grafo com %d vertices excede limite de 128 (__uint128_t bitmask)\n", n);
+        exit(1);
+    }
     m = graph_row_words(n);
 
     vector<unsigned long> g((size_t)n * m);
     stringtograph(buf.data(), g.data(), m);
+
+    int claw_free = with_claw_free ? (eh_claw_free(g.data()) ? 1 : 0) : -1;
 
     viz_fechada.resize(n);
     pares_checar.clear();
@@ -140,6 +182,8 @@ Resultado processar_grafo(const string &gs, bool with_chi, bool with_colorings) 
 
     for (int v = 0; v < n; v++)
         viz_fechada[v] = calc_viz_fechada(g.data(), v);
+
+    int twins = with_twins ? contar_twins(g.data(), viz_fechada) : -1;
 
     perm = bfs_order(g.data());
     vector<int> inv(n);
@@ -155,11 +199,11 @@ Resultado processar_grafo(const string &gs, bool with_chi, bool with_colorings) 
     }
 
     for (auto &par : pares_checar) {
-        uint64_t union_mask = viz_fechada[par.first] | viz_fechada[par.second];
+        __uint128_t union_mask = viz_fechada[par.first] | viz_fechada[par.second];
         int max_passo = 0;
-        uint64_t tmp = union_mask;
+        __uint128_t tmp = union_mask;
         while (tmp) {
-            int w = __builtin_ctzll(tmp);
+            int w = ctz128(tmp);
             tmp &= tmp - 1;
             if (inv[w] > max_passo) max_passo = inv[w];
         }
@@ -186,10 +230,10 @@ Resultado processar_grafo(const string &gs, bool with_chi, bool with_colorings) 
         coloring[perm[0]] = 0;
         if (backtrack(1, k, 0, coloring, g.data())) {
             vector<int> lid_col = with_colorings ? coloring : vector<int>{};
-            return {chi, k, true, lid_col, chi_coloring};
+            return {chi, k, claw_free, twins, true, lid_col, chi_coloring};
         }
     }
-    return {chi, -1, false, {}, chi_coloring};
+    return {chi, -1, claw_free, twins, false, {}, chi_coloring};
 }
 
 // linhas_anteriores: quantas linhas foram impressas na chamada anterior
@@ -197,7 +241,7 @@ Resultado processar_grafo(const string &gs, bool with_chi, bool with_colorings) 
 static int linhas_anteriores = 0;
 
 static void imprimir_progresso(int feitos, int total,
-                               const map<pair<int,int>,int> &dist,
+                               const map<tuple<int,int,int,int>,int> &dist,
                                int sem_coloracao,
                                bool with_chi) {
     // Sobe o cursor para apagar o bloco anterior
@@ -214,11 +258,14 @@ static void imprimir_progresso(int feitos, int total,
 
     // Totalizadores em tempo real
     int linhas = 1;
-    for (auto &[par, cnt] : dist) {
-        if (with_chi)
-            fprintf(stderr, "  chi=%d chi_lid=%d: %d\n", par.first, par.second, cnt);
-        else
-            fprintf(stderr, "  chi_lid=%d: %d\n", par.second, cnt);
+    for (auto &[t, cnt] : dist) {
+        auto [c, cl, cf, tw] = t;
+        fprintf(stderr, "  ");
+        if (with_chi) fprintf(stderr, "chi=%d ", c);
+        fprintf(stderr, "chi_lid=%d", cl);
+        if (cf != -1) fprintf(stderr, " claw_free=%s", cf ? "true" : "false");
+        if (tw != -1) fprintf(stderr, " twins=%d", tw);
+        fprintf(stderr, ": %d\n", cnt);
         linhas++;
     }
     if (sem_coloracao > 0) {
@@ -232,13 +279,15 @@ static void imprimir_progresso(int feitos, int total,
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Uso: %s <arquivo.g6> [--with-chi] [--with-colorings] [--output-all] [--chi-lid-filter N]\n", argv[0]);
+        fprintf(stderr, "Uso: %s <arquivo.g6> [--with-chi] [--with-colorings] [--output-all] [--chi-lid-filter N] [--claw-free] [--twins]\n", argv[0]);
         return 1;
     }
 
     bool output_all = false;
     bool with_chi = false;
     bool with_colorings = false;
+    bool with_claw_free = false;
+    bool with_twins = false;
     int chi_lid_filter = -1;
     const char *g6_file = nullptr;
     for (int i = 1; i < argc; i++) {
@@ -251,6 +300,10 @@ int main(int argc, char *argv[]) {
             with_chi = true;
         } else if (strcmp(argv[i], "--with-colorings") == 0) {
             with_colorings = true;
+        } else if (strcmp(argv[i], "--claw-free") == 0) {
+            with_claw_free = true;
+        } else if (strcmp(argv[i], "--twins") == 0) {
+            with_twins = true;
         } else if (strcmp(argv[i], "--chi-lid-filter") == 0 && i + 1 < argc) {
             chi_lid_filter = atoi(argv[++i]);
         } else {
@@ -271,7 +324,7 @@ int main(int argc, char *argv[]) {
     if (grafos.empty()) { fprintf(stderr, "Erro: arquivo vazio\n"); return 1; }
 
     int total = (int)grafos.size();
-    map<pair<int,int>, int> dist_pares;
+    map<tuple<int,int,int,int>, int> dist_pares;
     int sem_coloracao = 0, feitos = 0;
     double ultimo_tick = omp_get_wtime();
 
@@ -283,12 +336,12 @@ int main(int argc, char *argv[]) {
 
     #pragma omp parallel for schedule(dynamic, 1)
     for (int i = 0; i < total; i++) {
-        resultados[i] = processar_grafo(grafos[i], with_chi, with_colorings);
+        resultados[i] = processar_grafo(grafos[i], with_chi, with_colorings, with_claw_free, with_twins);
 
         #pragma omp critical
         {
             Resultado &r = resultados[i];
-            if (r.encontrou) dist_pares[{with_chi ? r.chi : -1, r.chi_lid}]++;
+            if (r.encontrou) dist_pares[{with_chi ? r.chi : -1, r.chi_lid, r.claw_free, r.twins}]++;
             else sem_coloracao++;
             feitos++;
             double agora = omp_get_wtime();
@@ -315,6 +368,10 @@ int main(int argc, char *argv[]) {
             if (with_chi)
                 cout << " chi=" << r.chi;
             cout << " chi_lid=" << r.chi_lid;
+            if (r.claw_free != -1)
+                cout << " claw_free=" << (r.claw_free ? "true" : "false");
+            if (r.twins != -1)
+                cout << " twins=" << r.twins;
             if (with_colorings) {
                 cout << " chi_coloring=[";
                 for (int v = 0; v < (int)r.coloring_chi.size(); v++)
@@ -328,15 +385,22 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (with_chi) {
-        cout << "\nDistribuicao por (chi, chi_lid):\n";
-        for (auto &[par, cnt] : dist_pares)
-            cout << "  chi=" << par.first << " chi_lid=" << par.second
-                 << ": " << cnt << " grafo(s)\n";
-    } else {
-        cout << "\nDistribuicao por chi_lid:\n";
-        for (auto &[par, cnt] : dist_pares)
-            cout << "  chi_lid=" << par.second << ": " << cnt << " grafo(s)\n";
+    {
+        cout << "\nDistribuicao por (";
+        if (with_chi) cout << "chi, ";
+        cout << "chi_lid";
+        if (with_claw_free) cout << ", claw_free";
+        if (with_twins) cout << ", twins";
+        cout << "):\n";
+        for (auto &[t, cnt] : dist_pares) {
+            auto [c, cl, cf, tw] = t;
+            cout << "  ";
+            if (with_chi) cout << "chi=" << c << " ";
+            cout << "chi_lid=" << cl;
+            if (cf != -1) cout << " claw_free=" << (cf ? "true" : "false");
+            if (tw != -1) cout << " twins=" << tw;
+            cout << ": " << cnt << " grafo(s)\n";
+        }
     }
     if (sem_coloracao > 0)
         cout << "  sem coloracao LID: " << sem_coloracao << " grafo(s)\n";

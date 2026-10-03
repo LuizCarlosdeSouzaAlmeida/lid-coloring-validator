@@ -43,22 +43,36 @@ Com a flag `--with-chi`, o algoritmo primeiro calcula o número cromático clás
 
 ### 5. Paralelismo com OpenMP
 
-Quando o arquivo de entrada contém múltiplos grafos, cada grafo é processado de forma independente. O laço principal é paralelizado com `#pragma omp parallel for schedule(dynamic, 1)`, distribuindo os grafos entre as threads disponíveis. Cada thread mantém seu próprio estado local (`thread_local`) para evitar condições de corrida. A diretiva `schedule(dynamic, 1)` balanceia a carga dinamicamente, uma vez que grafos diferentes podem ter tempos de resolução muito distintos.
+Há duas variantes do executável, com estratégias de paralelização distintas:
+
+- **`lid_coloring`** — paraleliza **entre grafos**. Quando o arquivo de entrada contém múltiplos grafos, o laço principal é distribuído com `#pragma omp parallel for schedule(dynamic, 1)`. Cada thread processa um grafo de cada vez, com estado local (`thread_local`) para evitar condições de corrida. Ideal para datasets com muitos grafos pequenos/médios.
+- **`parallel_lid_coloring`** — paraleliza **dentro de um único grafo**, lendo apenas o primeiro grafo do arquivo. Os primeiros níveis do backtracking (controlados por `--cutoff N`, padrão 6) geram um *task* OpenMP por ramo da árvore; abaixo do cutoff, executa sequencial. Um `atomic<bool>` sinaliza early termination para todas as threads quando uma encontra a coloração LID. Ideal para grafos grandes onde um único grafo já consome muito tempo.
 
 ## Build
 
 ```bash
 gcc -O2 -c graphio.c -o graphio.o
 g++ -std=c++17 -O2 -fopenmp -o lid_coloring lid_coloring.cpp graphio.o
+g++ -std=c++17 -O2 -fopenmp -o parallel_lid_coloring parallel_lid_coloring.cpp graphio.o
 ```
 
 ## Uso
+
+### `lid_coloring` — paraleliza entre grafos
 
 ```bash
 ./lid_coloring <arquivo.g6> [--with-chi] [--with-colorings] [--output-all] [--chi-lid-filter N]
 ```
 
-O programa aceita arquivos no formato **graph6** (`.g6`), suportando grafos com até 64 vértices.
+### `parallel_lid_coloring` — paraleliza dentro de um único grafo
+
+```bash
+./parallel_lid_coloring <arquivo.g6> [--with-chi] [--with-colorings] [--cutoff N]
+```
+
+Lê **apenas o primeiro grafo** do arquivo. O parâmetro `--cutoff N` (padrão 6) define a profundidade até a qual o backtracking gera tasks OpenMP — valores muito baixos deixam threads ociosas, muito altos geram overhead de tasks. Para grafos cúbicos com n ~ 60, valores entre 6 e 8 costumam funcionar bem.
+
+Ambos os programas aceitam arquivos no formato **graph6** (`.g6`) e suportam grafos com até **128 vértices** (bitmasks de vizinhança em `__uint128_t`).
 
 ### Modo rápido (padrão)
 
@@ -115,6 +129,19 @@ Imprime linhas apenas dos grafos com `chi_lid = N`. Combine com `--with-chi` e/o
 
 ---
 
+## Geração de subcúbicos conexos (`subcubics/`)
+
+O script `subcubics/generate.sh` usa `geng` (nauty) para gerar todos os grafos subcúbicos conexos (Δ ≤ 3) com 1 a 11 vértices em formato `.g6`. Pré-requisito: `sudo apt install nauty`.
+
+```bash
+./subcubics/generate.sh        # gera o que falta
+./subcubics/generate.sh -f     # força regerar tudo
+```
+
+Saída: `subcubics/subcubic_n01.g6` … `subcubics/subcubic_n11.g6` (um por ordem) e `subcubics/subcubic_all.g6` (concatenado, **8 095** grafos no total — OEIS A005638). Os arquivos `.g6` gerados são ignorados pelo git.
+
+---
+
 ## Visualizador Python
 
 Programa para desenhar grafos com as colorações χ e χ\_LID lado a lado.
@@ -147,6 +174,9 @@ python visualize_lid.py dataset/cub08.g6 --indices 0,2 --save-dir figuras/ --no-
 # Usar saída C++ já salva (evita reprocessar)
 ./lid_coloring dataset/cub10.g6 --output-all > saida.txt
 python visualize_lid.py dataset/cub10.g6 --from-output saida.txt --chi-lid 5
+
+# Usar parallel_lid_coloring (paraleliza dentro de UM grafo) — útil p/ grafos grandes
+python visualize_lid.py dataset/list_2_graphs.g6 --parallel --cutoff 6 --indices 0 --save-dir results/
 
 # Gerar HTML interativo com pyvis
 python visualize_lid.py dataset/cub08.g6 --indices 0 --html --save-dir figuras/ --no-show

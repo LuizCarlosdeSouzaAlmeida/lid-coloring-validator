@@ -44,6 +44,26 @@ Execuções que chegaram a 100%. Distribuição por (χ, χ_lid).
 - Grafos com girth ≥ 6: χ_lid ≤ 4 (cub20-gir6.g6 confirma)
 - Único grafo com χ = 4 encontrado: K₄ (n=4), com χ_lid = 4
 
+### Grafos com χ_lid = 6 e o subgrafo H
+
+H: 11 vértices, 16 arestas — dois triângulos ligados por um C₄ (cada triângulo adjacente a dois vértices opostos do C₄) e por um caminho de comprimento 2 cujo vértice interno tem grau 2. Arquivo `dataset/graph.g6` (graph6 `JxOWoCD?[?_`).
+
+Comando: `python check_subgraph.py dataset/graph.g6 --collection <coleção> --all`, coleções `results/lid6_collection.g6` (n = 14..20) e `results/cub22_g3_lid6.g6` (n = 22). Subgrafo e subgrafo induzido dão o mesmo resultado.
+
+| n | χ_lid = 6 | contêm H |
+|---|---|---|
+| 14 | 1 | 0 |
+| 16 | 1 | 1 |
+| 18 | 5 | 4 |
+| 20 | 19 | 19 |
+| 22 | 114 | 114 |
+| **Total** | **140** | **138** |
+
+Grafos com χ_lid = 6 que não contêm H:
+
+- n = 14: ``M{O__cGAGG?`?i?T?``
+- n = 18: `Q{O___GA?G?_?g?a_I?AG?HC?W_` (índice 6 em `results/lid6_collection.g6`)
+
 ---
 
 ## cub04.g6
